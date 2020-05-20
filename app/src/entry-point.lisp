@@ -92,6 +92,11 @@
      :initial-value 0
      :documentation "time limit (in seconds) for server requests (0 => unlimited)")
 
+    (("cache-chips")
+     :type integer
+     :initial-value 5
+     :documentation "the maximum number of chips to be cached between server requests.")
+
     (("version" #\v)
      :type boolean
      :optional t
@@ -393,6 +398,7 @@
                           (server-mode-rpc nil)
                           (host nil)
                           (port nil)
+                          (cache-chips nil)
                           time-limit
                           (help nil)
                           (log-level nil)
@@ -475,7 +481,8 @@
        (*human-readable-stream* (make-broadcast-stream))
        (*quil-stream* (make-broadcast-stream))
        (*protoquil* protoquil)
-       (quil::*safe-include-directory* safe-include-directory))
+       (quil::*safe-include-directory* safe-include-directory)
+       (*chip-cache-max-size* cache-chips))
 
     (when check-sdk-version
       (asynchronously-indicate-update-availability +QUILC-VERSION+ :proxy proxy))
