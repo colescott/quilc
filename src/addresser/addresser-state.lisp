@@ -34,6 +34,23 @@
               :documentation "The family of queues where not-yet-scheduled 1Q instructions live, while we get them out of the way to process 2Q instructions."))
   (:documentation "Common state to be manipulated by addressing routines. Implementations may often opt for more, but this represents the minimum that is expectred."))
 
+
+(defgeneric reinitialize-addresser-state (addresser)
+  (:documentation "Return the ADDRESSER instance to its initial state. This can be used to avoid repeating costly calculations during reuse.")
+  (:method ((instance addresser-state))
+    (with-slots (chip-spec initial-l2p)
+        instance
+      (setf (addresser-state-initial-l2p instance) initial-l2p
+            (addresser-state-working-l2p instance) (copy-rewiring initial-l2p)
+            (addresser-state-logical-schedule instance) (make-lscheduler)
+            (addresser-state-qubit-cc instance) (a:extremum (chip-spec-live-qubit-cc chip-spec)
+                                                            #'>
+                                                            :key #'length)
+            (addresser-state-chip-schedule instance) (make-chip-schedule chip-spec)
+            (addresser-state-chip-specification instance) chip-spec
+            (addresser-state-1q-queues instance) (make-array (chip-spec-n-qubits chip-spec) :initial-element (list)))
+      instance)))
+
 (defmethod initialize-instance :after ((instance addresser-state)
                                        &rest initargs
                                        &key
@@ -50,14 +67,8 @@
                         (t
                          (make-rewiring n-qubits)))))
     (setf (addresser-state-initial-l2p instance) initial-l2p
-          (addresser-state-working-l2p instance) (copy-rewiring initial-l2p)
-          (addresser-state-logical-schedule instance) (make-lscheduler)
-          (addresser-state-qubit-cc instance) (a:extremum (chip-spec-live-qubit-cc chip-spec)
-                                                          #'>
-                                                          :key #'length)
-          (addresser-state-chip-schedule instance) (make-chip-schedule chip-spec)
-          (addresser-state-chip-specification instance) chip-spec
-          (addresser-state-1q-queues instance) (make-array (chip-spec-n-qubits chip-spec) :initial-element (list)))))
+          (addresser-state-chip-specification instance) chip-spec)
+    (reinitialize-addresser-state instance)))
 
 
 (defmacro with-rotatef (places &body body)

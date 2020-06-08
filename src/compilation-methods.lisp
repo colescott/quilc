@@ -150,6 +150,7 @@
 (defun compiler-hook (parsed-program
                       chip-specification
                       &key
+                        (initial-addresser-state nil)
                         (protoquil nil)
                         (rewiring-type (prog-initial-rewiring-heuristic parsed-program chip-specification))
                         (destructive nil))
@@ -162,6 +163,8 @@ Arguments:
   - CHIP-SPECIFICATION: The chip specification describing the target chip
 
 Keyword arguments:
+
+  - INITIAL-ADDRESSER-STATE: An ADDRESSER-STATE object from which new addresser states should be derived. Useful for caching certain computations that do not depend the state of the addresser.
 
   - PROTOQUIL: Whether the input and output programs should conform to protoquil restrictions
 
@@ -209,8 +212,16 @@ Returns a value list: (processed-program, of type parsed-program
          ;; this is a list of pairs (block-to-be-traversed registrant)
          (block-stack (list (list (entry-point cfg) nil)))
          (topological-swaps 0)
-         (unpreserved-duration 0))
+         (unpreserved-duration 0)
+         (initial-addresser-state
+           (or initial-addresser-state
+               (make-instance *default-addresser-state-class*
+                              :chip-spec chip-specification
+                              :initial-l2p initial-rewiring))))
 
+    (setf (addresser-state-initial-l2p initial-addresser-state)
+          initial-rewiring)
+    (reinitialize-addresser-state initial-addresser-state)
     ;; In any rewiring scheme a preserved block must not touch dead
     ;; qubits.
     (check-preserved-blocks-skip-dead-qubits cfg chip-specification)
@@ -282,11 +293,11 @@ Returns a value list: (processed-program, of type parsed-program
            ;; actually process this block
            (multiple-value-bind (chip-schedule initial-l2p final-l2p)
                (do-greedy-addressing
-                   (make-instance *default-addresser-state-class*
-                                  :chip-spec chip-specification
-                                  :initial-l2p (if registrant
-                                                   (basic-block-in-rewiring blk)
-                                                   initial-rewiring))
+                   (progn
+                     (when registrant
+                       (setf (addresser-state-initial-l2p initial-addresser-state)
+                             (basic-block-in-rewiring blk)))
+                     (reinitialize-addresser-state initial-addresser-state))
                  (coerce (basic-block-code blk) 'list)
                  :initial-rewiring (if registrant
                                        (basic-block-in-rewiring blk)

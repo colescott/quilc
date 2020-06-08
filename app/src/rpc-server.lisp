@@ -45,10 +45,25 @@
                  :|topological_swaps| (gethash "topological_swaps" statistics)
                  :|qpu_runtime_estimation| (gethash "qpu_runtime_estimation" statistics)))
 
+(defclass cached-chip ()
+  ((last-accessed
+    :initarg :last-accessed
+    :type real
+    :accessor cached-chip-last-accessed)
+   (chip
+    :initarg :chip
+    :type chip-specification
+    :accessor cached-chip-chip)
+   (addresser-state
+    :initarg :addresser-state
+    :type quil::addresser-state
+    :accessor cached-chip-addresser-state))
+  (:documentation "Represents chip and addresser state cached between server requests."))
+
 (defvar *chip-cache* (make-hash-table :test #'equalp)
   "Cached chip specifications. Large chips have a significant construction overhead, and caching chips between requests reduces or eliminates that overhead. The hash value for a given key is a pair (last-access . chip-spec).")
 
-(defvar *chip-cache-max-size* 5 ; arbitrary but who cares
+(defvar *chip-cache-max-size* 0 ; arbitrary but who cares
   "The maximum number of entries in the cache.")
 
 (defun get-internal-real-time-seconds ()
@@ -61,10 +76,12 @@
 After calling this function, *CHIP-CACHE* has at most *CHIP-CACHE-MAX-SIZE* entries."
   (when (>= (hash-table-count *chip-cache*) *chip-cache-max-size*)
     (let* ((n (- (hash-table-count *chip-cache*) *chip-cache-max-size*))
-           (lru (subseq (sort (a:hash-table-alist *chip-cache*) #'< :key #'second) 0 n)))
+           (lru (subseq (sort (a:hash-table-alist *chip-cache*)
+                              #'<
+                              :key (a:compose #'cached-chip-last-accessed #'cdr))
+                        0 n)))
       (dolist (cached lru)
-        (remhash (first cached) *chip-cache*)))))
-
+        (remhash (car cached) *chip-cache*)))))
 
 (defun chip-cache-or-create (qpu-hash)
   "Look up the chip described by QPU-HASH in the chip spec cache if it exists, otherwise create and cache it.
@@ -73,15 +90,18 @@ This function has the added side-effect that it will purge old chips according t
   (let ((cache (gethash qpu-hash *chip-cache*)))
     (cond
       (cache
-       (setf (car cache) (get-internal-real-time-seconds))
-       (cdr cache))
+       (setf (cached-chip-last-accessed cache)
+             (get-internal-real-time-seconds))
+       cache)
       (t
-       (let ((chip (quil::qpu-hash-table-to-chip-specification qpu-hash)))
+       (let* ((chip (quil::qpu-hash-table-to-chip-specification qpu-hash))
+              (cached-chip (make-instance 'cached-chip
+                                          :last-accessed (get-internal-real-time-seconds)
+                                          :chip chip)))
          (setf (gethash qpu-hash *chip-cache*)
-               (cons (get-internal-real-time-seconds)
-                     chip))
+               cached-chip)
          (chip-cache-purge)
-         chip)))))
+         cached-chip)))))
 
 ;; TODO: rework the structure of process-program so that the JSON junk is only
 ;;       done in web-server.lisp, and this doesn't have to do back-translation.
@@ -93,14 +113,22 @@ This function has the added side-effect that it will purge old chips according t
          (qpu-hash (a:plist-hash-table (list "isa" (rpcq::|TargetDevice-isa| target-device)
                                              "specs" (rpcq::|TargetDevice-specs| target-device))
                                        :test #'equal))
-         (chip-specification (chip-cache-or-create qpu-hash))
-         ;; Allow endpoint to override server's -P
+         (cache (chip-cache-or-create qpu-hash))
+         (chip-specification (cached-chip-chip cache))
+         ;; Allow endpoint to override server's -Pnnn
          (protoquil (ecase protoquil
                       ((nil) *protoquil*)
                       (:false nil)
                       (t t))))
+    (unless (slot-boundp cache 'addresser-state)
+      (setf (cached-chip-addresser-state cache)
+            (make-instance quil::*default-addresser-state-class*
+                           :chip-spec chip-specification
+                           :initial-l2p (quil::prog-initial-rewiring quil-program chip-specification))))
     (multiple-value-bind (processed-program statistics-dict)
-        (process-program quil-program chip-specification :protoquil protoquil)
+        (process-program quil-program chip-specification
+                         :initial-addresser-state (cached-chip-addresser-state cache)
+                         :protoquil protoquil)
       (when protoquil
         (setf (gethash "qpu_runtime_estimation" statistics-dict)
               (runtime-estimation processed-program)))

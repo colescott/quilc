@@ -540,6 +540,7 @@
 
 (defun process-program (program chip-specification
                         &key
+                          initial-addresser-state
                           protoquil
                           verbose
                           gate-whitelist
@@ -554,7 +555,10 @@ Returns a values tuple (PROCESSED-PROGRAM, STATISTICS), where PROCESSED-PROGRAM 
          (*random-state* (make-random-state t)))
     ;; do the compilation
     (multiple-value-bind (processed-program topological-swaps)
-        (compiler-hook program chip-specification :protoquil protoquil :destructive t)
+        (compiler-hook program chip-specification
+                       :initial-addresser-state initial-addresser-state
+                       :protoquil protoquil
+                       :destructive t)
 
       ;; if we're supposed to output protoQuil, we strip circuit and gate definitions
       (when protoquil
