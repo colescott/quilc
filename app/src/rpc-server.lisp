@@ -45,64 +45,6 @@
                  :|topological_swaps| (gethash "topological_swaps" statistics)
                  :|qpu_runtime_estimation| (gethash "qpu_runtime_estimation" statistics)))
 
-(defclass cached-chip ()
-  ((last-accessed
-    :initarg :last-accessed
-    :type real
-    :accessor cached-chip-last-accessed)
-   (chip
-    :initarg :chip
-    :type chip-specification
-    :accessor cached-chip-chip)
-   (addresser-state
-    :initarg :addresser-state
-    :type quil::addresser-state
-    :accessor cached-chip-addresser-state))
-  (:documentation "Represents chip and addresser state cached between server requests."))
-
-(defvar *chip-cache* (make-hash-table :test #'equalp)
-  "Cached chip specifications. Large chips have a significant construction overhead, and caching chips between requests reduces or eliminates that overhead. The hash value for a given key is a pair (last-access . chip-spec).")
-
-(defvar *chip-cache-max-size* 0 ; arbitrary but who cares
-  "The maximum number of entries in the cache.")
-
-(defun get-internal-real-time-seconds ()
-  (/ (get-internal-real-time)
-     internal-time-units-per-second))
-
-(defun chip-cache-purge ()
-  "Purge the least recently used entries in *CHIP-CACHE* according to *CHIP-CACHE-MAX-SIZE*.
-
-After calling this function, *CHIP-CACHE* has at most *CHIP-CACHE-MAX-SIZE* entries."
-  (when (>= (hash-table-count *chip-cache*) *chip-cache-max-size*)
-    (let* ((n (- (hash-table-count *chip-cache*) *chip-cache-max-size*))
-           (lru (subseq (sort (a:hash-table-alist *chip-cache*)
-                              #'<
-                              :key (a:compose #'cached-chip-last-accessed #'cdr))
-                        0 n)))
-      (dolist (cached lru)
-        (remhash (car cached) *chip-cache*)))))
-
-(defun chip-cache-or-create (qpu-hash)
-  "Look up the chip described by QPU-HASH in the chip spec cache if it exists, otherwise create and cache it.
-
-This function has the added side-effect that it will purge old chips according to *CHIP-CACHE-MAX-SIZE*"
-  (let ((cache (gethash qpu-hash *chip-cache*)))
-    (cond
-      (cache
-       (setf (cached-chip-last-accessed cache)
-             (get-internal-real-time-seconds))
-       cache)
-      (t
-       (let* ((chip (quil::qpu-hash-table-to-chip-specification qpu-hash))
-              (cached-chip (make-instance 'cached-chip
-                                          :last-accessed (get-internal-real-time-seconds)
-                                          :chip chip)))
-         (setf (gethash qpu-hash *chip-cache*)
-               cached-chip)
-         (chip-cache-purge)
-         cached-chip)))))
-
 ;; TODO: rework the structure of process-program so that the JSON junk is only
 ;;       done in web-server.lisp, and this doesn't have to do back-translation.
 (defun quil-to-native-quil-handler (request &key protoquil)
